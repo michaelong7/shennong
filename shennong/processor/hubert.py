@@ -46,7 +46,12 @@ class HubertProcessor(FeaturesProcessor):
 
     def __init__(self, model_path=None):
         super().__init__()
+        torch.manual_seed(self._SEED)
+        np.random.seed(self._SEED)
+
         self.model_path = model_path
+        self.model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
+        
 
     @property
     def name(self):
@@ -142,8 +147,9 @@ class HubertProcessor(FeaturesProcessor):
             If the selected layer does not exist in the given model.
         """
 
-        torch.manual_seed(self._SEED)
-        np.random.seed(self._SEED)
+        self._check_layer(layer, self.model)
+
+        self.model.eval()
 
         # ensure the signal is correct
         if signal.nchannels != 1:
@@ -164,12 +170,7 @@ class HubertProcessor(FeaturesProcessor):
 
         signal = torch.unsqueeze(torch.from_numpy(signal.data), 0)
 
-        model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
-        model.eval()
-
-        self._check_layer(layer, model)
-
-        out_dict = model(signal, features_only=True, mask=False, output_layer=layer)
+        out_dict = self.model(signal, features_only=True, mask=False, output_layer=layer)
 
         data = out_dict["features"][0].squeeze(1).detach().numpy()
 
