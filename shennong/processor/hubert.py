@@ -9,12 +9,12 @@ Examples
 >>> from shennong.audio import Audio
 >>> from shennong.processor.hubert import HubertProcessor
 >>> audio = Audio.load('./test/data/test.wav')
->>> processor = HubertProcessor(layer=3, model_path='/home/exp/mhubert-147')
+>>> processor = HubertProcessor(model_path='/home/exp/mhubert-147')
 
 Compute the HuBERT features. the output is an
 instance of :class:`~shennong.features.Features`:
 
->>> hubert = processor.process(audio)
+>>> hubert = processor.process(audio, layer=3)
 >>> type(hubert)
 <class 'shennong.features.Features'>
 
@@ -38,39 +38,19 @@ class HubertProcessor(FeaturesProcessor):
 
     Parameters
     ----------
-    layer : 1, 2, ..., 12
-        The layer to extract features from
-
     model_path : The path to the pre-trained HuBERT model
         
     """
 
-    _LAYERS = tuple(i for i in range(1, 13))
-
     _SEED = 3939
 
-    def __init__(self, layer=None, model_path=None):
+    def __init__(self, model_path=None):
         super().__init__()
-        self.layer = layer
         self.model_path = model_path
 
     @property
     def name(self):
         return 'hubert'
-    
-    @property
-    def layer(self):
-        """Layer to extract features from"""
-        return self._layer
-
-    @layer.setter
-    def layer(self, value):
-        if int(value) not in self._LAYERS:
-            raise ValueError(f"Layer {value} does not exist in this model")
-        elif not value:
-            raise ValueError("No layers selected")
-        else:
-            self._layer = int(value)
 
     @property
     def model_path(self):
@@ -120,8 +100,14 @@ class HubertProcessor(FeaturesProcessor):
 
         """
         return 0.02
+    
+    def _check_layer(self, value, model):
+        if value not in range(len(model.encoder.layers) + 1):
+            raise ValueError(f"Layer {value} does not exist in this model")
+        elif not value:
+            raise ValueError("No layers selected")
 
-    def process(self, signal):
+    def process(self, signal, layer):
         """Computes HuBERT features with the specified options
 
         Use a pre-trained neural network to extract HuBERT
@@ -134,6 +120,9 @@ class HubertProcessor(FeaturesProcessor):
             The input audio signal to compute the features on, must be
             mono. The signal is up/down-sampled to 16 kHz during
             processing.
+
+        layer : int
+            The layer to extract features from
 
         Returns
         -------
@@ -149,6 +138,8 @@ class HubertProcessor(FeaturesProcessor):
             If the input `signal` has more than one channel (i.e. is
             not mono). If `sample_rate` != `signal.sample_rate`.
 
+        ValueError
+            If the selected layer does not exist in the given model.
         """
 
         torch.manual_seed(self._SEED)
@@ -176,7 +167,9 @@ class HubertProcessor(FeaturesProcessor):
         model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
         model.eval()
 
-        out_dict = model(signal, features_only=True, mask=False, output_layer=self.layer)
+        self._check_layer(layer, model)
+
+        out_dict = model(signal, features_only=True, mask=False, output_layer=layer)
 
         data = out_dict["features"][0].squeeze(1).detach().numpy()
 
