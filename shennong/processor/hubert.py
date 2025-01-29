@@ -32,6 +32,7 @@ import numpy as np
 
 from shennong import Features
 from shennong.processor.base import FeaturesProcessor
+from transformers import HubertForCTC
 
 class HubertProcessor(FeaturesProcessor):
     """HuBERT features from a pre-trained neural network
@@ -39,6 +40,12 @@ class HubertProcessor(FeaturesProcessor):
     Parameters
     ----------
     model_path : The path to the pre-trained HuBERT model
+
+    Raises
+    ------
+    RuntimeError
+        If the model path does not point to a HuBERT model 
+        that can be loaded with either fairseq or huggingface
         
     """
 
@@ -50,8 +57,15 @@ class HubertProcessor(FeaturesProcessor):
         np.random.seed(self._SEED)
 
         self.model_path = model_path
-        self.model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
-        
+        try:
+            self.model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
+            self._model_type = 'fairseq'
+        except IsADirectoryError:
+            try:
+                self.model = HubertForCTC.from_pretrained(self.model_path)
+                self._model_type = 'huggingface'
+            except:
+                raise RuntimeError(f"The model at {self.model_path} cannot be loaded. Make sure that this is a fairseq model or huggingface model directory.")
 
     @property
     def name(self):
@@ -107,7 +121,12 @@ class HubertProcessor(FeaturesProcessor):
         return 0.02
     
     def _check_layer(self, value, model):
-        if value not in range(len(model.encoder.layers) + 1):
+        if self._model_type == 'fairseq':
+            layer_num = len(model.encoder.layers) + 1
+        elif self._model_type == 'huggingface':
+            layer_num = model.config.num_hidden_layers + 1
+
+        if value not in range(layer_num):
             raise ValueError(f"Layer {value} does not exist in this model")
         elif not value:
             raise ValueError("No layers selected")
@@ -170,10 +189,13 @@ class HubertProcessor(FeaturesProcessor):
 
         signal = torch.unsqueeze(torch.from_numpy(signal.data), 0)
 
-        out_dict = self.model(signal, features_only=True, mask=False, output_layer=layer)
-
-        data = out_dict["features"][0].squeeze(1).detach().numpy()
-
+        if self._model_type == 'fairseq':
+            out_dict = self.model(signal, features_only=True, mask=False, output_layer=layer)
+            data = out_dict["features"][0].squeeze(1).detach().numpy()
+        elif self._model_type == 'huggingface':
+            out_dict = self.model(signal, output_hidden_states=True)
+            data = out_dict["hidden_states"][layer][0].squeeze(1).detach().numpy()
+        
         del out_dict
 
         # compute the timestamps for each output frame
