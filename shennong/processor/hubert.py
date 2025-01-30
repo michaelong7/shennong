@@ -41,17 +41,21 @@ class HubertProcessor(FeaturesProcessor):
     ----------
     model_path : The path to the pre-trained HuBERT model
 
+    layer : The layer to extract features from
+
     Raises
     ------
     RuntimeError
         If the model path does not point to a HuBERT model 
         that can be loaded with either fairseq or huggingface
-        
+
+    ValueError
+        If the selected layer does not exist in the given model.
     """
 
     _SEED = 3939
 
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, layer=0):
         super().__init__()
         torch.manual_seed(self._SEED)
         np.random.seed(self._SEED)
@@ -66,6 +70,9 @@ class HubertProcessor(FeaturesProcessor):
                 self._model_type = 'huggingface'
             except:
                 raise RuntimeError(f"The model at {self.model_path} cannot be loaded. Make sure that this is a fairseq model or huggingface model directory.")
+        
+        self._check_layer(layer, self.model)
+        self.layer = layer
 
     @property
     def name(self):
@@ -79,6 +86,15 @@ class HubertProcessor(FeaturesProcessor):
     @model_path.setter
     def model_path(self, value):
         self._model_path = str(value)
+
+    @property
+    def layer(self):
+        """The layer to extract features from"""
+        return self._layer
+
+    @layer.setter
+    def layer(self, value):
+        self._layer = int(value)
 
     @property
     def ndims(self):
@@ -131,7 +147,7 @@ class HubertProcessor(FeaturesProcessor):
         elif not value:
             raise ValueError("No layers selected")
 
-    def process(self, signal, layer):
+    def process(self, signal):
         """Computes HuBERT features with the specified options
 
         Use a pre-trained neural network to extract HuBERT
@@ -144,9 +160,6 @@ class HubertProcessor(FeaturesProcessor):
             The input audio signal to compute the features on, must be
             mono. The signal is up/down-sampled to 16 kHz during
             processing.
-
-        layer : int
-            The layer to extract features from
 
         Returns
         -------
@@ -161,12 +174,7 @@ class HubertProcessor(FeaturesProcessor):
         ValueError
             If the input `signal` has more than one channel (i.e. is
             not mono). If `sample_rate` != `signal.sample_rate`.
-
-        ValueError
-            If the selected layer does not exist in the given model.
         """
-
-        self._check_layer(layer, self.model)
 
         self.model.eval()
 
@@ -190,11 +198,11 @@ class HubertProcessor(FeaturesProcessor):
         signal = torch.unsqueeze(torch.from_numpy(signal.data), 0)
 
         if self._model_type == 'fairseq':
-            out_dict = self.model(signal, features_only=True, mask=False, output_layer=layer)
+            out_dict = self.model(signal, features_only=True, mask=False, output_layer=self.layer)
             data = out_dict["features"][0].squeeze(1).detach().numpy()
         elif self._model_type == 'huggingface':
             out_dict = self.model(signal, output_hidden_states=True)
-            data = out_dict["hidden_states"][layer][0].squeeze(1).detach().numpy()
+            data = out_dict["hidden_states"][self.layer][0].squeeze(1).detach().numpy()
         
         del out_dict
 
