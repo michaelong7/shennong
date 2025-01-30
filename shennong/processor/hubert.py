@@ -55,7 +55,7 @@ class HubertProcessor(FeaturesProcessor):
 
     _SEED = 3939
 
-    def __init__(self, model_path="", layer=0):
+    def __init__(self, model_path="", layer=""):
         super().__init__()
         torch.manual_seed(self._SEED)
         np.random.seed(self._SEED)
