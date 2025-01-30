@@ -55,7 +55,7 @@ class HubertProcessor(FeaturesProcessor):
 
     _SEED = 3939
 
-    def __init__(self, model_path=None, layer=0):
+    def __init__(self, model_path="", layer=0):
         super().__init__()
         torch.manual_seed(self._SEED)
         np.random.seed(self._SEED)
@@ -64,7 +64,7 @@ class HubertProcessor(FeaturesProcessor):
         try:
             self.model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
             self._model_type = 'fairseq'
-        except IsADirectoryError:
+        except:
             try:
                 self.model = HubertForCTC.from_pretrained(self.model_path)
                 self._model_type = 'huggingface'
