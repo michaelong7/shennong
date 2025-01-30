@@ -138,11 +138,11 @@ class HubertProcessor(FeaturesProcessor):
     
     def _check_layer(self, value, model):
         if self._model_type == 'fairseq':
-            layer_num = len(model.encoder.layers) + 1
+            layer_num = len(model.encoder.layers)
         elif self._model_type == 'huggingface':
-            layer_num = model.config.num_hidden_layers + 1
+            layer_num = model.config.num_hidden_layers
 
-        if value not in range(layer_num):
+        if value not in range(layer_num + 1):
             raise ValueError(f"Layer {value} does not exist in this model")
         elif not value:
             raise ValueError("No layers selected")
