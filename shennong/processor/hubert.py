@@ -9,12 +9,12 @@ Examples
 >>> from shennong.audio import Audio
 >>> from shennong.processor.hubert import HubertProcessor
 >>> audio = Audio.load('./test/data/test.wav')
->>> processor = HubertProcessor(model_path='/home/exp/mhubert-147')
+>>> processor = HubertProcessor(model_path='/home/exp/mhubert-147', layer=1, layer_type="convolutional")
 
 Compute the HuBERT features. the output is an
 instance of :class:`~shennong.features.Features`:
 
->>> hubert = processor.process(audio, layer=3)
+>>> hubert = processor.process(audio)
 >>> type(hubert)
 <class 'shennong.features.Features'>
 
@@ -30,6 +30,7 @@ import fairseq
 
 import numpy as np
 
+from ast import literal_eval
 from shennong import Features
 from shennong.processor.base import FeaturesProcessor
 from transformers import HubertForCTC
@@ -43,6 +44,8 @@ class HubertProcessor(FeaturesProcessor):
 
     layer : The layer to extract features from
 
+    layer_type : The type of layer to extract features from (encoder or convolutional)
+
     Raises
     ------
     RuntimeError
@@ -50,19 +53,22 @@ class HubertProcessor(FeaturesProcessor):
         that can be loaded with either fairseq or huggingface
 
     ValueError
-        If the selected layer does not exist in the given model.
+        If the selected layer does not exist in the given model
+        or if the given layer type does not exist.
     """
 
     _SEED = 3939
 
-    def __init__(self, model_path="", layer=""):
+    def __init__(self, model_path="", layer="", layer_type="encoder"):
         super().__init__()
         torch.manual_seed(self._SEED)
         np.random.seed(self._SEED)
 
         self.model_path = model_path
         try:
-            self.model = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])[0][0]
+            self.model, self._cfg, self._task_cfg = fairseq.checkpoint_utils.load_model_ensemble_and_task([self.model_path])
+            self._conv_list = self._parse_conv_str(self._cfg['model']['conv_feature_layers'])
+            self.model = self.model[0]
             self._model_type = 'fairseq'
         except:
             try:
@@ -71,7 +77,8 @@ class HubertProcessor(FeaturesProcessor):
             except:
                 raise RuntimeError(f"The model at {self.model_path} cannot be loaded. Make sure that this is a fairseq model or huggingface model directory.")
         
-        self._check_layer(layer, self.model)
+        self.layer_type = layer_type
+        self._check_layer(int(layer))
         self.layer = layer
 
     @property
@@ -95,6 +102,15 @@ class HubertProcessor(FeaturesProcessor):
     @layer.setter
     def layer(self, value):
         self._layer = int(value)
+    
+    @property
+    def layer_type(self):
+        """The type of layer that features are extracted from"""
+        return self._layer_type
+
+    @layer_type.setter
+    def layer_type(self, value):
+        self._layer_type = str(value)
 
     @property
     def ndims(self):
@@ -104,7 +120,16 @@ class HubertProcessor(FeaturesProcessor):
         trained with this parameter.
 
         """
-        return 768
+        if self.layer_type == 'encoder':
+            if self._model_type == 'fairseq':
+                return self._cfg['model']['encoder_embed_dim']
+            elif self._model_type == 'huggingface':
+                return self.model.config.hidden_size
+        elif self.layer_type == 'convolutional':
+            if self._model_type == 'fairseq':
+                return self._conv_list[self.layer - 1][0]
+            elif self._model_type == 'huggingface':
+                return self.model.config.conv_dim[self.layer - 1]
     
     @property
     def sample_rate(self):
@@ -124,7 +149,30 @@ class HubertProcessor(FeaturesProcessor):
         trained with this parameter.
 
         """
-        return 0.02
+
+        def get_receptive_field_length(kernels, strides):
+            field_length = 1
+            for i in range(len(kernels)):
+                field_length += (kernels[i] - 1) * np.prod(strides[:i])
+            return field_length
+
+        if self.layer_type == 'encoder':
+            # receptive field length of all convolutional layers
+            if self._model_type == 'fairseq':
+                _, kernels, strides = zip(*self._conv_list)
+            elif self._model_type == 'huggingface':
+                kernels = self.model.config.conv_kernel
+                strides = self.model.config.conv_stride
+        elif self.layer_type == 'convolutional':
+            # receptive field length of convolution layers up to selected layer
+            if self._model_type == 'fairseq':
+                _, kernels, strides = zip(*self._conv_list[:self.layer])
+            elif self._model_type == 'huggingface':
+                kernels = self.model.config.conv_kernel[:self.layer]
+                strides = self.model.config.conv_stride[:self.layer]
+        
+        frame_length = get_receptive_field_length(kernels, strides) / self.sample_rate
+        return frame_length
 
     @property
     def frame_shift(self):
@@ -134,18 +182,54 @@ class HubertProcessor(FeaturesProcessor):
         trained with this parameter.
 
         """
-        return 0.02
+        if self.layer_type == 'encoder':
+            # total stride length of all convolutional layers
+            if self._model_type == 'fairseq':
+                _, _, strides = zip(*self._conv_list)
+            elif self._model_type == 'huggingface':
+                strides = self.model.config.conv_stride
+        elif self.layer_type == 'convolutional':
+            # total stride length of convolution layers up to selected layer
+            if self._model_type == 'fairseq':
+                _, _, strides = zip(*self._conv_list[:self.layer])
+            elif self._model_type == 'huggingface':
+                strides = self.model.config.conv_stride[:self.layer]
+        
+        total_stride = np.prod(strides)
+        frame_shift = total_stride / self.sample_rate
+        return frame_shift
     
-    def _check_layer(self, value, model):
-        if self._model_type == 'fairseq':
-            layer_num = len(model.encoder.layers)
-        elif self._model_type == 'huggingface':
-            layer_num = model.config.num_hidden_layers
+    def _check_layer(self, value):
+        if self.layer_type == 'encoder':
+            if self._model_type == 'fairseq':
+                layer_num = self._cfg['model']['encoder_layers']
+            elif self._model_type == 'huggingface':
+                layer_num = self.model.config.num_hidden_layers
+        elif self.layer_type == 'convolutional':
+            if self._model_type == 'fairseq':
+                layer_num = len(self._conv_list)
+            elif self._model_type == 'huggingface':
+                layer_num = len(self.model.config.conv_dim)
+        else:
+             raise ValueError("Invalid layer type")
 
         if value not in range(layer_num + 1):
-            raise ValueError(f"Layer {value} does not exist in this model")
+            raise ValueError(f"There is no {self.layer_type} layer {value} in this model")
         elif not value:
             raise ValueError("No layers selected")
+
+    def _parse_conv_str(self, conv_str):
+        conv_list = []
+
+        for item in conv_str.split("+"):
+            item = item.strip()
+            if "*" in item:
+                feat, mult = item.split("*")
+                conv_list.extend(([literal_eval(item)[0] for item in (feat * int(mult)).split()]))
+            else:
+                conv_list.append(literal_eval(item)[0])
+
+        return conv_list
 
     def process(self, signal):
         """Computes HuBERT features with the specified options
@@ -163,11 +247,13 @@ class HubertProcessor(FeaturesProcessor):
 
         Returns
         -------
-        features : Features, shape = [nframes, 768]
-            The computed HuBERT features will have as many rows as
-            there are frames (depends on the `signal` duration, expect
-            about 50 frames per second), each frame with 768
-            dimensions.
+        features : Features, shape = [nframes, ndim]
+            The computed HuBERT features will either:
+            have as many rows as there are frames (depends on the `signal` duration, expect
+            50 frames per second) for encoder layers,
+            or have as many rows as there are samples divided by the product of the stride lengths 
+            (depends on the `signal` duration and the stride lengths) for convolutional layers,
+            each frame with the number of dimensions in the layer.
 
         Raises
         ------
@@ -199,17 +285,24 @@ class HubertProcessor(FeaturesProcessor):
 
         if self._model_type == 'fairseq':
             out_dict = self.model(signal, features_only=True, mask=False, output_layer=self.layer)
-            data = out_dict["features"][0].squeeze(1).detach().numpy()
+            if self.layer_type == 'encoder':
+                data = out_dict["features"][0].squeeze(1).detach().numpy()
+            elif self.layer_type == 'convolutional':
+                self._cfg['model']['conv_feature_layers'] = str(self._conv_list[:self.layer])
+                self.model.feature_extractor = fairseq.models.hubert.HubertModel.build_model(self._cfg['model'], self._task_cfg).feature_extractor
+                data = self.model.forward_features(signal).transpose(1, 2).squeeze(0).detach().numpy()
         elif self._model_type == 'huggingface':
             out_dict = self.model(signal, output_hidden_states=True)
-            data = out_dict["hidden_states"][self.layer][0].squeeze(1).detach().numpy()
-        
+            if self.layer_type == 'encoder':
+                data = out_dict["hidden_states"][self.layer][0].squeeze(1).detach().numpy()
+            elif self.layer_type == 'convolutional':
+                self.model.hubert.config.num_feat_extract_layers = self.layer
+                self.model.hubert.feature_extractor = HubertForCTC(self.model.hubert.config).hubert.feature_extractor
+                data = self.model.hubert.feature_extractor(signal).transpose(1, 2).squeeze(0).detach().numpy()
         del out_dict
 
-        # compute the timestamps for each output frame
-        times = np.vstack((
-            np.arange(data.shape[0]) * self.frame_shift,
-            np.arange(data.shape[0]) * self.frame_shift + self.frame_length)).T
-
+        # compute the timestamps for the midpoint of each output frame
+        times = np.vstack((np.arange(data.shape[0]) * self.frame_shift + (self.frame_length / 2))).squeeze(1)
+        
         return Features(
             data, times, properties=self.get_properties())
