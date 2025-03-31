@@ -42,9 +42,8 @@ class HubertProcessor(FeaturesProcessor):
     ----------
     model_path : The path to the pre-trained HuBERT model
 
-    layer : The layer to extract features from
-
-    layer_type : The type of layer to extract features from (encoder or convolutional)
+    layer_info : Tuple with the type of layer to extract features from (encoder or convolutional)
+                 as the first element and the layer number as the second element
 
     Raises
     ------
@@ -59,7 +58,7 @@ class HubertProcessor(FeaturesProcessor):
 
     _SEED = 3939
 
-    def __init__(self, model_path="", layer="", layer_type="encoder"):
+    def __init__(self, model_path="", layer_info=("encoder", "1")):
         super().__init__()
         torch.manual_seed(self._SEED)
         np.random.seed(self._SEED)
@@ -77,6 +76,10 @@ class HubertProcessor(FeaturesProcessor):
             except:
                 raise RuntimeError(f"The model at {self.model_path} cannot be loaded. Make sure that this is a fairseq model or huggingface model directory.")
         
+        self.layer_info = layer_info
+        layer_type = layer_info[0]
+        layer = layer_info[1]
+
         self.layer_type = layer_type
         self._check_layer(int(layer))
         self.layer = layer
