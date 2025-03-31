@@ -304,8 +304,10 @@ class HubertProcessor(FeaturesProcessor):
                 data = self.model.hubert.feature_extractor(signal).transpose(1, 2).squeeze(0).detach().numpy()
         del out_dict
 
-        # compute the timestamps for the midpoint of each output frame
-        times = np.vstack((np.arange(data.shape[0]) * self.frame_shift + (self.frame_length / 2))).squeeze(1)
-        
+        # compute the timestamps for each output frame
+        times = np.vstack((
+            np.arange(data.shape[0]) * self.frame_shift,
+            np.arange(data.shape[0]) * self.frame_shift + self.frame_length)).T
+
         return Features(
             data, times, properties=self.get_properties())
