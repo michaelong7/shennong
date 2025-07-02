@@ -9,7 +9,7 @@ Examples
 >>> from shennong.audio import Audio
 >>> from shennong.processor.hubert import HubertProcessor
 >>> audio = Audio.load('./test/data/test.wav')
->>> processor = HubertProcessor(model_path='/home/exp/mhubert-147', layer=1, layer_type="convolutional")
+>>> processor = HubertProcessor(model_path="facebook/hubert-large-ls960-ft", layer_info=("encoder", 1))
 
 Compute the HuBERT features. the output is an
 instance of :class:`~shennong.features.Features`:
