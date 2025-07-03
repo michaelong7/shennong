@@ -33,7 +33,7 @@ import numpy as np
 from ast import literal_eval
 from shennong import Features
 from shennong.processor.base import FeaturesProcessor
-from transformers import HubertForCTC
+from transformers import HubertForCTC, AutoFeatureExtractor
 
 class HubertProcessor(FeaturesProcessor):
     """HuBERT features from a pre-trained neural network
@@ -284,10 +284,11 @@ class HubertProcessor(FeaturesProcessor):
                 signal.sample_rate, signal.dtype.itemsize * 8, 16000, 32)
             signal = signal.resample(16000).astype(np.float32)
 
-        signal = torch.unsqueeze(torch.from_numpy(signal.data), 0)
-
         if self._model_type == 'fairseq':
-            out_dict = self.model(signal, features_only=True, mask=False, output_layer=self.layer)
+            signal = torch.unsqueeze(torch.from_numpy(signal.data), 0)
+            self.model.feature_extractor = fairseq.models.hubert.HubertModel.build_model(self._cfg['model'], self._task_cfg).feature_extractor
+            input_values = self.model.forward_features(signal).transpose(1, 2).squeeze(0).detach().numpy()
+            out_dict = self.model(input_values, features_only=True, mask=False, output_layer=self.layer)
             if self.layer_type == 'encoder':
                 data = out_dict["features"][0].squeeze(1).detach().numpy()
             elif self.layer_type == 'convolutional':
@@ -295,7 +296,14 @@ class HubertProcessor(FeaturesProcessor):
                 self.model.feature_extractor = fairseq.models.hubert.HubertModel.build_model(self._cfg['model'], self._task_cfg).feature_extractor
                 data = self.model.forward_features(signal).transpose(1, 2).squeeze(0).detach().numpy()
         elif self._model_type == 'huggingface':
-            out_dict = self.model(signal, output_hidden_states=True)
+            feature_extractor = AutoFeatureExtractor.from_pretrained(self.model_path)
+            input_values = feature_extractor(
+                signal.data,
+                return_tensors="pt",
+                padding=True,
+                sampling_rate=16000,
+            ).input_values
+            out_dict = self.model(input_values, output_hidden_states=True)
             if self.layer_type == 'encoder':
                 data = out_dict["hidden_states"][self.layer][0].squeeze(1).detach().numpy()
             elif self.layer_type == 'convolutional':
