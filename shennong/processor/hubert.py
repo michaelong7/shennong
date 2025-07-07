@@ -318,4 +318,4 @@ class HubertProcessor(FeaturesProcessor):
             np.arange(data.shape[0]) * self.frame_shift + self.frame_length)).T
 
         return Features(
-            input_values.numpy(), times, properties=self.get_properties())
+            data, times, properties=self.get_properties())
