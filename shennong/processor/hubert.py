@@ -303,7 +303,6 @@ class HubertProcessor(FeaturesProcessor):
                 padding=True,
                 sampling_rate=16000,
             ).input_values
-            print("feature extractor")
             out_dict = self.model(input_values, output_hidden_states=True)
             if self.layer_type == 'encoder':
                 data = out_dict["hidden_states"][self.layer][0].squeeze(1).detach().numpy()
@@ -319,4 +318,4 @@ class HubertProcessor(FeaturesProcessor):
             np.arange(data.shape[0]) * self.frame_shift + self.frame_length)).T
 
         return Features(
-            data, times, properties=self.get_properties())
+            input_values.numpy(), times, properties=self.get_properties())
